@@ -6,7 +6,7 @@ https://json-schema.org/
 import enum
 from typing import Any, Dict, List, Tuple
 
-from sky.catalog import constants as service_catalog_constants
+from sky import resources
 from sky.skylet import constants
 
 
@@ -44,14 +44,20 @@ _AUTOSTOP_SCHEMA = {
         {
             # Shorthand to set idle_minutes by directly specifying, e.g.
             #   autostop: 5
-            'type': 'integer',
-            'minimum': 0,
+            'anyOf': [{
+                'type': 'string',
+                'pattern': resources.TIME_PATTERN,
+                'minimum': 0,
+            }, {
+                'type': 'integer',
+            }]
         },
         {
             'type': 'object',
             'required': [],
             'additionalProperties': False,
             'properties': {
+                # TODO(luca): update field to use time units as well.
                 'idle_minutes': {
                     'type': 'integer',
                     'minimum': 0,
@@ -70,7 +76,7 @@ def _get_single_resources_schema():
     # Building the regex pattern for the infra field
     # Format: cloud[/region[/zone]] or wildcards or kubernetes context
     # Match any cloud name (case insensitive)
-    all_clouds = list(service_catalog_constants.ALL_CLOUDS)
+    all_clouds = list(constants.ALL_CLOUDS)
     all_clouds.remove('kubernetes')
     cloud_pattern = f'(?i:({"|".join(all_clouds)}))'
 
@@ -107,8 +113,7 @@ def _get_single_resources_schema():
         'properties': {
             'cloud': {
                 'type': 'string',
-                'case_insensitive_enum': list(
-                    service_catalog_constants.ALL_CLOUDS)
+                'case_insensitive_enum': list(constants.ALL_CLOUDS)
             },
             'region': {
                 'type': 'string',
@@ -192,7 +197,12 @@ def _get_single_resources_schema():
                     'type': 'object',
                     'properties': {
                         'disk_size': {
-                            'type': 'integer',
+                            'anyOf': [{
+                                'type': 'string',
+                                'pattern': resources.MEMORY_SIZE_PATTERN,
+                            }, {
+                                'type': 'integer',
+                            }],
                         },
                         'disk_tier': {
                             'type': 'string',
@@ -216,7 +226,12 @@ def _get_single_resources_schema():
                 },
             },
             'disk_size': {
-                'type': 'integer',
+                'anyOf': [{
+                    'type': 'string',
+                    'pattern': resources.MEMORY_SIZE_PATTERN,
+                }, {
+                    'type': 'integer',
+                }],
             },
             'disk_tier': {
                 'type': 'string',
@@ -275,6 +290,11 @@ def _get_single_resources_schema():
                 }]
             },
             'autostop': _AUTOSTOP_SCHEMA,
+            'priority': {
+                'type': 'integer',
+                'minimum': 0,
+                'maximum': 1000,
+            },
             # The following fields are for internal use only. Should not be
             # specified in the task config.
             '_docker_login_config': {
@@ -367,6 +387,7 @@ def get_resources_schema():
 def get_storage_schema():
     # pylint: disable=import-outside-toplevel
     from sky.data import storage
+
     return {
         '$schema': 'https://json-schema.org/draft/2020-12/schema',
         'type': 'object',
@@ -406,7 +427,12 @@ def get_storage_schema():
                 'type': 'object',
                 'properties': {
                     'disk_size': {
-                        'type': 'integer',
+                        'anyOf': [{
+                            'type': 'string',
+                            'pattern': resources.MEMORY_SIZE_PATTERN,
+                        }, {
+                            'type': 'integer',
+                        }],
                     },
                     'disk_tier': {
                         'type': 'string',
@@ -1151,9 +1177,17 @@ def get_config_schema():
 
     admin_policy_schema = {
         'type': 'string',
-        # Check regex to be a valid python module path
-        'pattern': (r'^[a-zA-Z_][a-zA-Z0-9_]*'
-                    r'(\.[a-zA-Z_][a-zA-Z0-9_]*)+$'),
+        'anyOf': [
+            {
+                # Check regex to be a valid python module path
+                'pattern': (r'^[a-zA-Z_][a-zA-Z0-9_]*'
+                            r'(\.[a-zA-Z_][a-zA-Z0-9_]*)+$'),
+            },
+            {
+                # Check for valid HTTP/HTTPS URL
+                'pattern': r'^https?://.*$',
+            }
+        ]
     }
 
     allowed_clouds = {
@@ -1162,7 +1196,7 @@ def get_config_schema():
         'items': {
             'type': 'string',
             'case_insensitive_enum':
-                (list(service_catalog_constants.ALL_CLOUDS) + ['cloudflare'])
+                (list(constants.ALL_CLOUDS) + ['cloudflare'])
         }
     }
 
@@ -1207,10 +1241,21 @@ def get_config_schema():
         }
     }
 
+    rbac_schema = {
+        'type': 'object',
+        'required': [],
+        'additionalProperties': False,
+        'properties': {
+            'default_role': {
+                'type': 'string',
+                'case_insensitive_enum': ['admin', 'user']
+            },
+        },
+    }
+
     workspace_schema = {'type': 'string'}
 
-    allowed_workspace_cloud_names = list(
-        service_catalog_constants.ALL_CLOUDS) + ['cloudflare']
+    allowed_workspace_cloud_names = list(constants.ALL_CLOUDS) + ['cloudflare']
     # Create pattern for not supported clouds, i.e.
     # all clouds except gcp, kubernetes, ssh
     not_supported_clouds = [
@@ -1240,6 +1285,15 @@ def get_config_schema():
             'properties': {
                 # Explicit definition for GCP allows both project_id and
                 # disabled
+                'private': {
+                    'type': 'boolean',
+                },
+                'allowed_users': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'string',
+                    },
+                },
                 'gcp': {
                     'type': 'object',
                     'properties': {
@@ -1334,6 +1388,9 @@ def get_config_schema():
             'workspace': {
                 'type': 'string',
             },
+            'db': {
+                'type': 'string',
+            },
             'jobs': controller_resources_schema,
             'serve': controller_resources_schema,
             'allowed_clouds': allowed_clouds,
@@ -1344,6 +1401,7 @@ def get_config_schema():
             'active_workspace': workspace_schema,
             'workspaces': workspaces_schema,
             'provision': provision_configs,
+            'rbac': rbac_schema,
             **cloud_configs,
         },
     }
